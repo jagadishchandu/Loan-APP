@@ -7,15 +7,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package manifests first for better caching
-COPY frontend/package.json frontend/yarn.lock /app/
-RUN yarn install --frozen-lockfile
+# Copy package.json first for better layer caching
+COPY frontend/package.json /app/package.json
 
-# Copy rest of the frontend
+# Copy yarn.lock if present (wildcard works in BuildKit even when no files match).
+# If yarn.lock is missing locally, yarn install will generate one inside the image.
+COPY frontend/yarn.lock* /app/
+
+# Install deps. We deliberately do NOT use --frozen-lockfile here so the build
+# works whether or not yarn.lock was shipped with the repo.
+RUN yarn install --network-timeout 1000000
+
+# Copy the rest of the frontend source
 COPY frontend /app
 
 EXPOSE 3000 8081 19000 19001 19002
 
 # Run Expo on LAN mode (works inside docker and is reachable from your phone on same Wi-Fi).
-# Override at runtime with `command:` in docker-compose if you need tunnel mode.
 CMD ["yarn", "expo", "start", "--port", "3000", "--lan"]
