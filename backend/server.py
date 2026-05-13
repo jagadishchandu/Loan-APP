@@ -27,6 +27,7 @@ JWT_ALGORITHM = 'HS256'
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
 EMERGENT_SESSION_DATA_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -126,6 +127,7 @@ class LoanIn(BaseModel):
     reminder_enabled: bool = True
     reminder_day: int = Field(default=1, ge=1, le=28)
     notes: Optional[str] = None
+    request_acceptance: bool = False  # if true and counterparty is linked, status starts as pending_acceptance
 
 class LoanUpdate(BaseModel):
     principal_amount: Optional[float] = None
@@ -134,15 +136,23 @@ class LoanUpdate(BaseModel):
     reminder_enabled: Optional[bool] = None
     reminder_day: Optional[int] = None
     notes: Optional[str] = None
-    status: Optional[Literal["active", "settled", "closed", "overdue"]] = None
+    status: Optional[Literal["active", "settled", "closed", "overdue", "pending_acceptance", "rejected"]] = None
 
 class SubscribeIn(BaseModel):
     tier: Literal["private", "public"]
     payment_method: Literal["phonepe", "google_play", "paypal"]
 
+class PaymentIn(BaseModel):
+    amount: float = Field(gt=0)
+    note: Optional[str] = None
+    paid_at: Optional[str] = None  # ISO date; defaults to today
+
+class PushTokenIn(BaseModel):
+    expo_push_token: str
+
 # ============ Helpers ============
-def calc_loan_metrics(loan: dict) -> dict:
-    """Compute monthly interest, accrued interest, total due."""
+def calc_loan_metrics(loan: dict, total_paid: float = 0.0) -> dict:
+    """Compute monthly interest, accrued interest, total due (after payments)."""
     principal = float(loan.get("principal_amount", 0))
     rate = float(loan.get("interest_rate", 0))
     start_date_str = loan.get("start_date")
@@ -156,16 +166,46 @@ def calc_loan_metrics(loan: dict) -> dict:
     months_elapsed = max(0, (now.year - start.year) * 12 + (now.month - start.month))
     monthly_interest = round(principal * rate / 1200, 2)
     accrued_interest = round(monthly_interest * months_elapsed, 2)
-    total_due = round(principal + accrued_interest, 2)
+    gross_due = principal + accrued_interest
+    total_due = round(max(0.0, gross_due - total_paid), 2)
     return {
         "monthly_interest": monthly_interest,
         "accrued_interest": accrued_interest,
+        "total_paid": round(total_paid, 2),
         "total_due": total_due,
         "months_elapsed": months_elapsed,
     }
 
-def serialize_loan(loan: dict) -> dict:
-    metrics = calc_loan_metrics(loan)
+
+async def sum_payments(loan_id: str) -> float:
+    cur = db.payments.find({"loan_id": loan_id}, {"_id": 0, "amount": 1})
+    total = 0.0
+    async for p in cur:
+        total += float(p.get("amount", 0))
+    return total
+
+
+async def send_push(user_id: str, title: str, body: str, data: dict | None = None) -> None:
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "expo_push_token": 1})
+    token = user.get("expo_push_token") if user else None
+    if not token:
+        return
+    message = {
+        "to": token,
+        "sound": "default",
+        "title": title,
+        "body": body,
+        "data": data or {},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            await http.post(EXPO_PUSH_URL, json=message, headers={"Content-Type": "application/json"})
+    except Exception as e:
+        logger.warning(f"Push send failed: {e}")
+
+
+def serialize_loan(loan: dict, total_paid: float = 0.0) -> dict:
+    metrics = calc_loan_metrics(loan, total_paid=total_paid)
     out = {k: v for k, v in loan.items() if k != "_id"}
     out.update(metrics)
     # Determine overdue
@@ -197,6 +237,7 @@ async def startup():
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
     await db.loans.create_index("owner_user_id")
     await db.contacts.create_index([("owner_user_id", 1), ("email", 1)])
+    await db.payments.create_index("loan_id")
     logger.info("LendSplit backend started")
 
 @app.on_event("shutdown")
@@ -415,7 +456,21 @@ async def list_loans(
         query["status"] = status
     cursor = db.loans.find(query, {"_id": 0}).sort("created_at", -1)
     items = await cursor.to_list(500)
-    return [serialize_loan(l) for l in items]
+    result = []
+    for l in items:
+        paid = await sum_payments(l["loan_id"])
+        result.append(serialize_loan(l, total_paid=paid))
+    return result
+
+@api.get("/loans/incoming")
+async def incoming_loans(current_user: dict = Depends(get_current_user)):
+    """Loans where I am the counterparty awaiting acceptance."""
+    cursor = db.loans.find(
+        {"counterparty_user_id": current_user["user_id"], "status": "pending_acceptance"},
+        {"_id": 0},
+    ).sort("created_at", -1)
+    items = await cursor.to_list(200)
+    return [serialize_loan(l, total_paid=0.0) for l in items]
 
 @api.get("/loans/{loan_id}")
 async def get_loan(loan_id: str, current_user: dict = Depends(get_current_user)):
@@ -424,7 +479,8 @@ async def get_loan(loan_id: str, current_user: dict = Depends(get_current_user))
         raise HTTPException(status_code=404, detail="Loan not found")
     if loan["owner_user_id"] != current_user["user_id"] and loan.get("counterparty_user_id") != current_user["user_id"]:
         raise HTTPException(status_code=403, detail="Not authorized")
-    return serialize_loan(loan)
+    paid = await sum_payments(loan_id)
+    return serialize_loan(loan, total_paid=paid)
 
 @api.patch("/loans/{loan_id}")
 async def update_loan(loan_id: str, data: LoanUpdate, current_user: dict = Depends(get_current_user)):
@@ -437,7 +493,8 @@ async def update_loan(loan_id: str, data: LoanUpdate, current_user: dict = Depen
     update["updated_at"] = datetime.now(timezone.utc)
     await db.loans.update_one({"loan_id": loan_id}, {"$set": update})
     updated = await db.loans.find_one({"loan_id": loan_id}, {"_id": 0})
-    return serialize_loan(updated)
+    paid = await sum_payments(loan_id)
+    return serialize_loan(updated, total_paid=paid)
 
 @api.delete("/loans/{loan_id}")
 async def delete_loan(loan_id: str, current_user: dict = Depends(get_current_user)):
@@ -447,6 +504,107 @@ async def delete_loan(loan_id: str, current_user: dict = Depends(get_current_use
     if loan["owner_user_id"] != current_user["user_id"]:
         raise HTTPException(status_code=403, detail="Only owner can delete")
     await db.loans.delete_one({"loan_id": loan_id})
+    await db.payments.delete_many({"loan_id": loan_id})
+    return {"ok": True}
+
+# ============ Payments (partial repayments) ============
+@api.post("/loans/{loan_id}/payments")
+async def add_payment(loan_id: str, data: PaymentIn, current_user: dict = Depends(get_current_user)):
+    loan = await db.loans.find_one({"loan_id": loan_id}, {"_id": 0})
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    if loan["owner_user_id"] != current_user["user_id"] and loan.get("counterparty_user_id") != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    payment_id = f"pay_{uuid.uuid4().hex[:12]}"
+    paid_at = datetime.now(timezone.utc)
+    if data.paid_at:
+        try:
+            parsed = datetime.fromisoformat(data.paid_at.replace("Z", "+00:00"))
+            paid_at = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except Exception:
+            pass
+    payment = {
+        "payment_id": payment_id,
+        "loan_id": loan_id,
+        "by_user_id": current_user["user_id"],
+        "amount": float(data.amount),
+        "note": data.note,
+        "paid_at": paid_at,
+        "created_at": datetime.now(timezone.utc),
+    }
+    await db.payments.insert_one(payment.copy())
+    # Auto-settle if fully paid
+    total_paid = await sum_payments(loan_id)
+    metrics = calc_loan_metrics(loan, total_paid=total_paid)
+    if metrics["total_due"] <= 0 and loan.get("status") == "active":
+        await db.loans.update_one({"loan_id": loan_id}, {"$set": {"status": "settled", "updated_at": datetime.now(timezone.utc)}})
+    # Notify the other party
+    other_id = loan["owner_user_id"] if current_user["user_id"] == loan.get("counterparty_user_id") else loan.get("counterparty_user_id")
+    if other_id:
+        await send_push(other_id, "Payment recorded", f"₹{data.amount} payment on loan with {current_user.get('name')}", {"loan_id": loan_id})
+    payment.pop("_id", None)
+    payment["paid_at"] = payment["paid_at"].isoformat()
+    payment["created_at"] = payment["created_at"].isoformat()
+    return payment
+
+@api.get("/loans/{loan_id}/payments")
+async def list_payments(loan_id: str, current_user: dict = Depends(get_current_user)):
+    loan = await db.loans.find_one({"loan_id": loan_id}, {"_id": 0})
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    if loan["owner_user_id"] != current_user["user_id"] and loan.get("counterparty_user_id") != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    cur = db.payments.find({"loan_id": loan_id}, {"_id": 0}).sort("paid_at", -1)
+    items = await cur.to_list(500)
+    for p in items:
+        for k in ("paid_at", "created_at"):
+            v = p.get(k)
+            if isinstance(v, datetime):
+                p[k] = v.isoformat()
+    return items
+
+# ============ Acceptance flow ============
+@api.post("/loans/{loan_id}/accept")
+async def accept_loan(loan_id: str, current_user: dict = Depends(get_current_user)):
+    loan = await db.loans.find_one({"loan_id": loan_id}, {"_id": 0})
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    if loan.get("counterparty_user_id") != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the counterparty can accept")
+    if loan.get("status") != "pending_acceptance":
+        raise HTTPException(status_code=400, detail="Loan is not pending acceptance")
+    await db.loans.update_one(
+        {"loan_id": loan_id},
+        {"$set": {"status": "active", "accepted_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)}},
+    )
+    await send_push(loan["owner_user_id"], "Loan accepted", f"{current_user.get('name')} accepted your loan", {"loan_id": loan_id})
+    updated = await db.loans.find_one({"loan_id": loan_id}, {"_id": 0})
+    return serialize_loan(updated, total_paid=await sum_payments(loan_id))
+
+@api.post("/loans/{loan_id}/reject")
+async def reject_loan(loan_id: str, current_user: dict = Depends(get_current_user)):
+    loan = await db.loans.find_one({"loan_id": loan_id}, {"_id": 0})
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    if loan.get("counterparty_user_id") != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the counterparty can reject")
+    if loan.get("status") != "pending_acceptance":
+        raise HTTPException(status_code=400, detail="Loan is not pending acceptance")
+    await db.loans.update_one(
+        {"loan_id": loan_id},
+        {"$set": {"status": "rejected", "rejected_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)}},
+    )
+    await send_push(loan["owner_user_id"], "Loan declined", f"{current_user.get('name')} declined the loan", {"loan_id": loan_id})
+    updated = await db.loans.find_one({"loan_id": loan_id}, {"_id": 0})
+    return serialize_loan(updated, total_paid=0.0)
+
+# ============ Push token registration ============
+@api.post("/users/me/push-token")
+async def register_push_token(data: PushTokenIn, current_user: dict = Depends(get_current_user)):
+    await db.users.update_one(
+        {"user_id": current_user["user_id"]},
+        {"$set": {"expo_push_token": data.expo_push_token, "push_token_updated_at": datetime.now(timezone.utc)}},
+    )
     return {"ok": True}
 
 # ============ Dashboard ============
@@ -466,7 +624,8 @@ async def dashboard(current_user: dict = Depends(get_current_user)):
     settled = 0
     now = datetime.now(timezone.utc)
     for l in loans:
-        m = calc_loan_metrics(l)
+        total_paid_l = await sum_payments(l["loan_id"])
+        m = calc_loan_metrics(l, total_paid=total_paid_l)
         principal = float(l.get("principal_amount", 0))
         st = l.get("status", "active")
         if l.get("direction") == "borrowed":

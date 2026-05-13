@@ -1,0 +1,52 @@
+{
+  "summary": "Phase 2 testing: 17/21 backend Phase-2 tests pass (~81%). Found CRITICAL backend bug: `request_acceptance=true` on POST /api/loans is IGNORED — status is hardcoded to 'active' regardless of the flag. This breaks the entire acceptance flow (incoming list empty, accept/reject return 400 because loan is never in pending_acceptance state). Payments, push-token, dashboard-with-payments, and regression suites all pass. Frontend mobile flows verified: login, profile→inbox (empty state), profile→backup (export blob lendsplit-v1:... generated). Docker files reviewed and look syntactically valid.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/loans",
+        "issue": "request_acceptance=true is silently ignored. server.py line 437 hardcodes status='active'. Status should be 'pending_acceptance' when request_acceptance=True AND linked_user_id is set. This breaks /loans/incoming, /accept, /reject — they all return empty/400.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {"endpoint": "passlib/bcrypt warning on startup", "issue": "Benign bcrypt 4.x AttributeError logged repeatedly. Functionality unaffected. (Same as iteration_1.)"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Inbox / Acceptance UI", "issue": "Cannot end-to-end verify accept/reject from UI because backend never creates pending_acceptance loans (see critical bug). Empty-state UI renders correctly.", "affected_testIDs": ["accept-{id}", "reject-{id}", "inbox-empty-state"]}
+    ],
+    "design_issues": [
+      {"screen": "global", "issues": ["React Native web 'shadow*' deprecated warning (cosmetic, carried over from iteration_1).", "props.pointerEvents deprecation warning."]}
+    ],
+    "react_native_issues": [
+      {"component": "expo-notifications", "issue": "Listening to push-token changes not supported on web (expected; works on native)."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_api.py",
+    "/app/test_reports/pytest/phase2_results.xml"
+  ],
+  "action_items": [
+    "FIX backend: in POST /api/loans (server.py around line 437), set status='pending_acceptance' when data.request_acceptance is True AND linked_user_id is not None. E.g.:  status = 'pending_acceptance' if (data.request_acceptance and linked_user_id) else 'active'  — then assign to loan['status'].",
+    "After fix, also trigger send_push to counterparty with title 'New loan request' so they get notified (currently no push on creation).",
+    "(Optional) Pin bcrypt<4 or upgrade passlib to silence startup warning."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 715 lines — close to the 700-line threshold. Suggest splitting into routers/auth.py, routers/loans.py, routers/payments.py, routers/subscription.py for maintainability.",
+    "send_push() does a synchronous .get on user.get('expo_push_token') with no None-guard on user dict — line 190 will TypeError if user is None (find_one returns None for missing user). Add `user = user or {}` or early-return.",
+    "POST /api/loans does not call send_push on creation (even when counterparty is linked). Should notify counterparty for both pending and active loans.",
+    "calc_loan_metrics months_elapsed uses raw calendar-month diff; loans started on the 30th of a month and queried on the 1st of next month would compute 1 month of interest after 2 days — acceptable for MVP, document in code.",
+    "Frontend ENV var is EXPO_PUBLIC_BACKEND_URL (correct for Expo SDK 49+); system-prompt mentions EXPO_BACKEND_URL — confirmed real key matches Expo convention."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase2_api.py (created)"
+  ],
+  "success_rate": {"backend": "81% (17/21 phase-2 tests; all 4 failures stem from one root cause — request_acceptance flag ignored)", "frontend": "Login + Inbox empty + Backup export verified; accept/reject UI not verifiable until backend fix"},
+  "seed_data_creation": "Created multiple TEST_lender_*/TEST_borrower_*/TEST_stranger_*@example.com users plus several public loans + payments. Demo user demo@lendsplit.app retained.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 2 endpoints: POST/GET /api/loans/{id}/payments, GET /api/loans/incoming, POST /api/loans/{id}/accept|reject, POST /api/users/me/push-token. All work EXCEPT the create-loan endpoint never sets status='pending_acceptance' even when request_acceptance=true (server.py line 437 hardcodes 'active'). After main agent fixes, re-run: pytest /app/backend/tests/test_phase2_api.py -v. Frontend testIDs added in Phase 2: profile-inbox-row, profile-backup-row, inbox-back-button, inbox-empty-state, incoming-card-{id}, accept-{id}, reject-{id}, backup-back-button, backup-mode-export, backup-mode-import, backup-passphrase-input, backup-blob-input, backup-action-button, backup-copy-button, payments-close-button, payment-amount-input, payment-note-input, payment-add-button, payment-row-{id}, loan-payments-button, loan-detail-total-due, loan-settle-button, loan-close-button, loan-delete-button. Backup export generates 'lendsplit-v1:...' blob using AES-256-GCM + PBKDF2 (visible in UI). Docker files reviewed: Dockerfile.backend, Dockerfile.frontend, docker-compose.yml, backend/.env.docker, frontend/.env.docker, DOCKER.md — all present and syntactically valid; compose references services mongodb/backend/frontend with correct env_file mappings.",
+  "rca_of_issue": "ROOT CAUSE — server.py POST /api/loans handler (lines 408–442) accepts LoanIn.request_acceptance: bool = False but never reads the flag when constructing the loan document. The loan dict on line 437 has `status: 'active'` as a fixed string. FIX: replace `\"status\": \"active\"` with `\"status\": \"pending_acceptance\" if (data.request_acceptance and linked_user_id) else \"active\"`. REPRODUCTION: Signup lender + borrower; POST /api/loans as lender with counterparty_email=borrower_email and request_acceptance=true; response.status == 'active' (expected 'pending_acceptance'); GET /api/loans/incoming as borrower returns []. MITIGATION: One-line fix in server.py; the accept/reject/incoming endpoints themselves are correctly implemented."
+}

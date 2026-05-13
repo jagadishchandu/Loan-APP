@@ -55,6 +55,7 @@ export type Loan = {
   counterparty_name: string;
   counterparty_email?: string | null;
   counterparty_phone?: string | null;
+  counterparty_user_id?: string | null;
   direction: 'lent' | 'borrowed';
   principal_amount: number;
   interest_rate: number;
@@ -63,13 +64,25 @@ export type Loan = {
   reminder_enabled: boolean;
   reminder_day: number;
   notes?: string | null;
-  status: 'active' | 'settled' | 'closed' | 'overdue';
+  status: 'active' | 'settled' | 'closed' | 'overdue' | 'pending_acceptance' | 'rejected';
   monthly_interest: number;
   accrued_interest: number;
+  total_paid?: number;
   total_due: number;
   months_elapsed: number;
   is_overdue?: boolean;
   created_at?: string;
   updated_at?: string;
   owner_user_id?: string;
+  owner_name?: string;
+};
+
+export type Payment = {
+  payment_id: string;
+  loan_id: string;
+  by_user_id: string;
+  amount: number;
+  note?: string | null;
+  paid_at: string;
+  created_at?: string;
 };

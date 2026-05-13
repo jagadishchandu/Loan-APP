@@ -51,6 +51,9 @@ function RootNav() {
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="loan/[id]" options={{ presentation: 'card' }} />
+      <Stack.Screen name="payments/[id]" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="inbox" options={{ presentation: 'card' }} />
+      <Stack.Screen name="backup" options={{ presentation: 'card' }} />
       <Stack.Screen name="add-loan" options={{ presentation: 'modal' }} />
       <Stack.Screen name="subscription" options={{ presentation: 'modal' }} />
     </Stack>

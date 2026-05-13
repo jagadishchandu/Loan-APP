@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api, setToken, User } from './api';
+import { registerPushTokenIfAvailable } from './push';
 
 type AuthState = {
   user: User | null;
@@ -32,6 +33,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     loadMe();
   }, [loadMe]);
+
+  // Register push token whenever a user becomes available
+  useEffect(() => {
+    if (user) {
+      registerPushTokenIfAvailable().catch(() => {});
+    }
+  }, [user?.user_id]);
 
   const signIn = async (email: string, password: string) => {
     const r = await api.post('/auth/login', { email, password });

@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: lendsplit-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - lendsplit
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: lendsplit-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env.docker
+    ports:
+      - "8001:8001"
+    depends_on:
+      - mongodb
+    networks:
+      - lendsplit
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: lendsplit-frontend
+    restart: unless-stopped
+    env_file:
+      - ./frontend/.env.docker
+    ports:
+      - "3000:3000"   # Expo web
+      - "8081:8081"   # Metro
+      - "19000:19000" # Expo dev tools
+      - "19001:19001"
+      - "19002:19002"
+    depends_on:
+      - backend
+    networks:
+      - lendsplit
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+networks:
+  lendsplit:
+    driver: bridge
+
+volumes:
+  mongo_data:

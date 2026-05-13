@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Crown, LogOut, ChevronRight, Shield, Mail, Phone } from 'lucide-react-native';
+import { Crown, LogOut, ChevronRight, Shield, Mail, Phone, Inbox, ShieldCheck } from 'lucide-react-native';
 import { useAuth } from '../../lib/AuthContext';
 import { colors, spacing, radii, type } from '../../constants/theme';
 
@@ -51,6 +51,12 @@ export default function Profile() {
         </TouchableOpacity>
 
         <View style={styles.section}>
+          <TouchableOpacity testID="profile-inbox-row" onPress={() => router.push('/inbox')}>
+            <Row icon={<Inbox size={20} color={colors.text.secondary} strokeWidth={1.8} />} title="Inbox" sub="Incoming loan requests to acknowledge" />
+          </TouchableOpacity>
+          <TouchableOpacity testID="profile-backup-row" onPress={() => router.push('/backup')}>
+            <Row icon={<ShieldCheck size={20} color={colors.text.secondary} strokeWidth={1.8} />} title="Encrypted backup" sub="Export or restore your private loans" />
+          </TouchableOpacity>
           <Row icon={<Shield size={20} color={colors.text.secondary} strokeWidth={1.8} />} title="Privacy & data" sub="Learn how your data is stored" />
         </View>
 

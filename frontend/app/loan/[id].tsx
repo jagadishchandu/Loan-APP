@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
-import { ArrowLeft, CheckCircle2, XCircle, Trash2 } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle2, XCircle, Trash2, Wallet } from 'lucide-react-native';
 import { useAuth } from '../../lib/AuthContext';
 import { api, Loan } from '../../lib/api';
 import {
@@ -136,6 +136,21 @@ export default function LoanDetail() {
         {loan.notes ? <DetailRow label="Notes" value={loan.notes} /> : null}
 
         {/* Actions */}
+        {loan.mode === 'public' && loan.status === 'active' && (
+          <TouchableOpacity
+            testID="loan-payments-button"
+            style={[styles.paymentsBtn, { borderColor: accent }]}
+            onPress={() => router.push(`/payments/${loan.loan_id}`)}
+          >
+            <Wallet size={18} color={accent} />
+            <Text style={[styles.paymentsBtnText, { color: accent }]}>
+              {loan.total_paid && loan.total_paid > 0
+                ? `View repayments • ${'\u20B9'}${loan.total_paid.toLocaleString('en-IN')} paid`
+                : 'Record a repayment'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {loan.status === 'active' && (
           <View style={styles.actions}>
             <TouchableOpacity
@@ -240,4 +255,16 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   deleteText: { color: colors.status.overdue, fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
+  paymentsBtn: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.md,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    marginTop: spacing.md,
+    backgroundColor: colors.ui.surface,
+  },
+  paymentsBtnText: { fontFamily: 'Manrope_700Bold', fontSize: 14 },
 });
