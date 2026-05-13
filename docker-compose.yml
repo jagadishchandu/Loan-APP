@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: lendsplit-db
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "5432:5432"
+    volumes:
+      - lendsplit_pgdata:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./backend
+    container_name: lendsplit-api
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+
+volumes:
+  lendsplit_pgdata:
