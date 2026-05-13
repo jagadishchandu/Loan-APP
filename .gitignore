@@ -84,6 +84,13 @@ android-sdk/-e
 .env
 .env.*
 *.env
+# But DO commit these template/docker-config env files (they contain no secrets):
+!.env.example
+!.env.docker
+!backend/.env.example
+!backend/.env.docker
+!frontend/.env.example
+!frontend/.env.docker
 credentials.json
 *.pem
 *.key
