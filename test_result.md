@@ -101,3 +101,89 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Build a mobile app (LendSplit). Fix UI bugs:
+  - Logout button on Profile is not working
+  - Add Loan: pressing Save allows saving twice (double submit)
+  - Add Loan: pressing Close (X) doesn't close the screen
+  Then do a full sweep across the app and find/fix any remaining UI bugs.
+
+frontend:
+  - task: "Profile: Logout button (cross-platform confirm)"
+    implemented: true
+    working: true
+    file: "frontend/app/(tabs)/profile.tsx, frontend/lib/confirm.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Replaced Alert.alert (whose button callbacks don't fire on react-native-web) with new cross-platform confirm() helper. Tapping 'Sign out' on web now goes through window.confirm and calls signOut(), then RootNav redirects to (auth)/login."
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: Logout button works correctly. Clicking 'Sign out' triggers window.confirm dialog on web, user confirms, and app successfully redirects to /login. Tested on mobile viewport (412x850)."
+
+  - task: "Add Loan: prevent double-save"
+    implemented: true
+    working: true
+    file: "frontend/app/add-loan.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Added synchronous savingRef guard at start of save() in addition to existing setSaving/disabled state. Fast double-tap can no longer fire two POST /api/loans calls."
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: Double-save prevention works. Rapidly clicked Save button 5 times with valid form data (name: Bob TestUser, amount: 7500). Only 1 loan was created as confirmed by checking home screen total outstanding. The savingRef guard successfully prevents multiple submissions."
+
+  - task: "Add Loan: close button reliably dismisses"
+    implemented: true
+    working: true
+    file: "frontend/app/add-loan.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Wrapped router.back() in closeScreen() that falls back to router.replace('/(tabs)') when canGoBack() is false. Enlarged hit area to 44x44 with hitSlop."
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: Close (X) button works correctly. Clicking the close button successfully dismisses the Add Loan modal and returns to the previous screen. The closeScreen() function with canGoBack() fallback is working as expected."
+
+  - task: "Full app UI sweep (login, signup, tabs, add, loans list, loan detail, payments, reminders, inbox, backup, subscription)"
+    implemented: true
+    working: true
+    file: "frontend/app/**"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Requesting a comprehensive auto-frontend sweep across all screens to surface any remaining UI bugs (broken navigation, non-responsive buttons, double-submits, missing close/back behavior, keyboard handling, etc)."
+        - working: true
+          agent: "testing"
+          comment: "COMPREHENSIVE UI SWEEP COMPLETED. Tested all major flows: Login/Signup work correctly. All tabs (Home, Loans, Reminders, Profile) render and navigate properly. Mode toggle (Public/Private) works. Loan detail screen loads with working back button. All modal screens (Subscription, Inbox, Backup, Payments) open and close correctly with their respective close/back buttons. Form validation on Add Loan works (empty form, zero amount, invalid rate all trigger alerts). No critical UI bugs found. All navigation flows work as expected."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 2
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: "Fixed three reported UI bugs (logout, double-save, close not closing). Please run a full UI sweep of the app and report any other UI bugs (broken navigation, non-responsive buttons, modal dismissal, keyboard handling, double-submits on other forms, web vs native Alert callbacks). Test creds in /app/memory/test_credentials.md: tester@lendsplit.dev / Test@1234. App URL is the preview / (port 3000)."
+    - agent: "testing"
+      message: "TESTING COMPLETE ✅ All 3 originally reported bugs are FIXED and working correctly: (1) Logout button works with cross-platform confirm, (2) Double-save prevention works with savingRef guard, (3) Add Loan close button works with canGoBack() fallback. Comprehensive UI sweep completed across all screens - no critical bugs found. All navigation, modals, forms, and tabs work as expected. App is ready for user acceptance."
