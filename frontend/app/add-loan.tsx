@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -39,6 +39,15 @@ export default function AddLoan() {
   const [reminderDay, setReminderDay] = useState('1');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+
+  const closeScreen = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)');
+    }
+  };
 
   const monthlyInterest = (() => {
     const p = parseFloat(amount) || 0;
@@ -47,6 +56,8 @@ export default function AddLoan() {
   })();
 
   const save = async () => {
+    // Hard guard against double-tap / double-execution
+    if (savingRef.current) return;
     if (!counterpartyName.trim()) {
       Alert.alert('Missing info', 'Please enter the counterparty name.');
       return;
@@ -61,6 +72,7 @@ export default function AddLoan() {
       Alert.alert('Invalid rate', 'Interest rate must be 0-100% per year.');
       return;
     }
+    savingRef.current = true;
     setSaving(true);
     try {
       if (mode === 'public') {
@@ -102,9 +114,10 @@ export default function AddLoan() {
         });
         await addPrivateLoan(user.user_id, loan);
       }
-      router.back();
+      closeScreen();
     } catch (e: any) {
       Alert.alert('Failed to save', e?.response?.data?.detail || e?.message || 'Try again');
+      savingRef.current = false;
     } finally {
       setSaving(false);
     }
@@ -113,7 +126,7 @@ export default function AddLoan() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.header}>
-        <TouchableOpacity testID="add-loan-close-button" onPress={() => router.back()} style={styles.closeBtn}>
+        <TouchableOpacity testID="add-loan-close-button" onPress={closeScreen} style={styles.closeBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <X size={22} color={colors.text.primary} />
         </TouchableOpacity>
         <View style={[styles.modeBadge, { backgroundColor: accent }]}>
@@ -289,7 +302,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.layout,
     paddingVertical: spacing.md,
   },
-  closeBtn: { padding: 6 },
+  closeBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   modeBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radii.pill },
   modeBadgeText: { color: '#fff', fontFamily: 'Manrope_700Bold', fontSize: 11, letterSpacing: 1 },
   scroll: { padding: spacing.layout, paddingBottom: spacing.xxxl },

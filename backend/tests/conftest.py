@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent / "frontend" / ".env")
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://shared-lending.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://mobile-loan-bugfix.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 

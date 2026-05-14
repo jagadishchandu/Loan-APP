@@ -4,7 +4,7 @@ import requests
 import pytest
 from datetime import datetime, timezone, timedelta
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://shared-lending.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://mobile-loan-bugfix.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 

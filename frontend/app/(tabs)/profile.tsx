@@ -1,22 +1,35 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Crown, LogOut, ChevronRight, Shield, Mail, Phone, Inbox, ShieldCheck } from 'lucide-react-native';
 import { useAuth } from '../../lib/AuthContext';
+import { confirm } from '../../lib/confirm';
 import { colors, spacing, radii, type } from '../../constants/theme';
 
 export default function Profile() {
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const tierLabel = user?.subscription_tier === 'public' ? 'Public Pro' : user?.subscription_tier === 'private' ? 'Private Pro' : 'Free';
 
-  const onLogout = () => {
-    Alert.alert('Sign out', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => signOut() },
-    ]);
+  const onLogout = async () => {
+    if (loggingOut) return;
+    const ok = await confirm({
+      title: 'Sign out',
+      message: 'Are you sure you want to sign out?',
+      confirmText: 'Sign out',
+      cancelText: 'Cancel',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      setLoggingOut(true);
+      await signOut();
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   return (
