@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
-import { ArrowLeft, CheckCircle2, XCircle, Trash2, Wallet } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle2, XCircle, Trash2, Wallet, Pencil } from 'lucide-react-native';
 import { useAuth } from '../../lib/AuthContext';
 import { api, Loan } from '../../lib/api';
 import {
@@ -19,6 +19,7 @@ import {
   deletePrivateLoan,
   computeMetrics,
 } from '../../lib/privateStorage';
+import { confirm } from '../../lib/confirm';
 import { colors, spacing, radii, type, formatINR } from '../../constants/theme';
 
 export default function LoanDetail() {
@@ -31,6 +32,8 @@ export default function LoanDetail() {
 
   const [loan, setLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -52,7 +55,24 @@ export default function LoanDetail() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const onEdit = () => {
+    router.push(`/add-loan?edit=${loanId}&mode=${mode}`);
+  };
+
   const updateStatus = async (status: 'settled' | 'closed') => {
+    if (busyRef.current) return;
+    const ok = await confirm({
+      title: status === 'settled' ? 'Mark as settled?' : 'Close this loan?',
+      message: status === 'settled'
+        ? 'This marks the loan as fully repaid.'
+        : 'Closing a loan archives it. You can still view it later.',
+      confirmText: status === 'settled' ? 'Mark settled' : 'Close loan',
+      cancelText: 'Cancel',
+      destructive: status === 'closed',
+    });
+    if (!ok) return;
+    busyRef.current = true;
+    setBusy(true);
     try {
       if (mode === 'public') {
         await api.patch(`/loans/${loanId}`, { status });
@@ -62,29 +82,63 @@ export default function LoanDetail() {
       await load();
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.detail || 'Failed to update');
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   };
 
-  const onDelete = () => {
-    Alert.alert('Delete loan?', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            if (mode === 'public') {
-              await api.delete(`/loans/${loanId}`);
-            } else if (user) {
-              await deletePrivateLoan(user.user_id, loanId);
-            }
-            router.back();
-          } catch (e: any) {
-            Alert.alert('Error', e?.response?.data?.detail || 'Failed to delete');
-          }
-        },
-      },
-    ]);
+  const reopen = async () => {
+    if (busyRef.current) return;
+    const ok = await confirm({
+      title: 'Reopen loan?',
+      message: 'This will mark the loan as active again.',
+      confirmText: 'Reopen',
+      cancelText: 'Cancel',
+    });
+    if (!ok) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      if (mode === 'public') {
+        await api.patch(`/loans/${loanId}`, { status: 'active' });
+      } else if (user) {
+        await updatePrivateLoan(user.user_id, loanId, { status: 'active' });
+      }
+      await load();
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.detail || 'Failed to update');
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  const onDelete = async () => {
+    if (busyRef.current) return;
+    const ok = await confirm({
+      title: 'Delete loan?',
+      message: 'This will permanently remove the loan and any recorded payments. This cannot be undone.',
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      destructive: true,
+    });
+    if (!ok) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      if (mode === 'public') {
+        await api.delete(`/loans/${loanId}`);
+      } else if (user) {
+        await deletePrivateLoan(user.user_id, loanId);
+      }
+      if (router.canGoBack()) router.back();
+      else router.replace('/(tabs)');
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.detail || 'Failed to delete');
+      busyRef.current = false;
+      setBusy(false);
+    }
   };
 
   if (loading || !loan) {
@@ -100,11 +154,16 @@ export default function LoanDetail() {
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity testID="loan-detail-back" onPress={() => router.back()}>
+        <TouchableOpacity testID="loan-detail-back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))} style={styles.iconBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <ArrowLeft size={24} color={colors.text.primary} />
         </TouchableOpacity>
-        <View style={[styles.modeBadge, { backgroundColor: accent }]}>
-          <Text style={styles.modeBadgeText}>{loan.mode.toUpperCase()}</Text>
+        <View style={styles.headerRight}>
+          <TouchableOpacity testID="loan-edit-button" onPress={onEdit} style={styles.iconBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Pencil size={20} color={colors.text.primary} />
+          </TouchableOpacity>
+          <View style={[styles.modeBadge, { backgroundColor: accent }]}>
+            <Text style={styles.modeBadgeText}>{loan.mode.toUpperCase()}</Text>
+          </View>
         </View>
       </View>
 
@@ -155,16 +214,18 @@ export default function LoanDetail() {
           <View style={styles.actions}>
             <TouchableOpacity
               testID="loan-settle-button"
-              style={[styles.actionBtn, { backgroundColor: colors.status.settled }]}
+              style={[styles.actionBtn, { backgroundColor: colors.status.settled }, busy && { opacity: 0.6 }]}
               onPress={() => updateStatus('settled')}
+              disabled={busy}
             >
               <CheckCircle2 size={18} color="#fff" />
               <Text style={styles.actionText}>Mark settled</Text>
             </TouchableOpacity>
             <TouchableOpacity
               testID="loan-close-button"
-              style={[styles.actionBtn, { backgroundColor: colors.text.secondary }]}
+              style={[styles.actionBtn, { backgroundColor: colors.text.secondary }, busy && { opacity: 0.6 }]}
               onPress={() => updateStatus('closed')}
+              disabled={busy}
             >
               <XCircle size={18} color="#fff" />
               <Text style={styles.actionText}>Close loan</Text>
@@ -172,7 +233,19 @@ export default function LoanDetail() {
           </View>
         )}
 
-        <TouchableOpacity testID="loan-delete-button" style={styles.deleteBtn} onPress={onDelete}>
+        {(loan.status === 'settled' || loan.status === 'closed') && (
+          <TouchableOpacity
+            testID="loan-reopen-button"
+            style={[styles.actionBtn, { backgroundColor: accent, marginTop: spacing.lg }, busy && { opacity: 0.6 }]}
+            onPress={reopen}
+            disabled={busy}
+          >
+            <CheckCircle2 size={18} color="#fff" />
+            <Text style={styles.actionText}>Reopen loan</Text>
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity testID="loan-delete-button" style={[styles.deleteBtn, busy && { opacity: 0.6 }]} onPress={onDelete} disabled={busy}>
           <Trash2 size={16} color={colors.status.overdue} />
           <Text style={styles.deleteText}>Delete loan</Text>
         </TouchableOpacity>
@@ -208,6 +281,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.layout,
     paddingVertical: spacing.md,
   },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  iconBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   modeBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radii.pill },
   modeBadgeText: { color: '#fff', fontFamily: 'Manrope_700Bold', fontSize: 11, letterSpacing: 1 },
   scroll: { padding: spacing.layout, paddingBottom: spacing.xxxl },

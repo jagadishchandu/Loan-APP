@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,19 +13,37 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { X, ArrowRight } from 'lucide-react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { X, ArrowRight, Check } from 'lucide-react-native';
 import { useAuth } from '../lib/AuthContext';
 import { useMode } from '../lib/ModeContext';
 import { api } from '../lib/api';
-import { addPrivateLoan, computeMetrics } from '../lib/privateStorage';
+import {
+  addPrivateLoan,
+  computeMetrics,
+  getPrivateLoan,
+  updatePrivateLoan,
+} from '../lib/privateStorage';
+import DatePickerField from '../components/DatePickerField';
 import { colors, spacing, radii, type, formatINR } from '../constants/theme';
+
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export default function AddLoan() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ edit?: string; mode?: string }>();
   const { user } = useAuth();
-  const { mode } = useMode();
-  const accent = mode === 'private' ? colors.brand.private : colors.brand.public;
+  const { mode: activeMode, setMode } = useMode();
+
+  // When editing, the loan's own mode takes precedence over the active app mode.
+  const editLoanId = (params.edit as string) || null;
+  const editMode = ((params.mode as 'private' | 'public') || activeMode) as 'private' | 'public';
+  const isEdit = !!editLoanId;
+  const effectiveMode = isEdit ? editMode : activeMode;
+  const accent = effectiveMode === 'private' ? colors.brand.private : colors.brand.public;
 
   const [direction, setDirection] = useState<'lent' | 'borrowed'>('lent');
   const [counterpartyName, setCounterpartyName] = useState('');
@@ -33,21 +51,62 @@ export default function AddLoan() {
   const [counterpartyPhone, setCounterpartyPhone] = useState('');
   const [amount, setAmount] = useState('');
   const [interestRate, setInterestRate] = useState('0');
-  const [startDate] = useState(new Date().toISOString().slice(0, 10));
-  const [dueDate, setDueDate] = useState('');
+  const [startDate, setStartDate] = useState<string>(todayISO());
+  const [dueDate, setDueDate] = useState<string>('');
   const [reminderEnabled, setReminderEnabled] = useState(true);
   const [reminderDay, setReminderDay] = useState('1');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [loadingExisting, setLoadingExisting] = useState(isEdit);
   const savingRef = useRef(false);
 
-  const closeScreen = () => {
+  // Load existing loan for edit
+  useEffect(() => {
+    if (!isEdit) return;
+    let mounted = true;
+    (async () => {
+      try {
+        let loan: any = null;
+        if (editMode === 'public') {
+          const r = await api.get(`/loans/${editLoanId}`);
+          loan = r.data;
+        } else if (user) {
+          loan = await getPrivateLoan(user.user_id, editLoanId);
+        }
+        if (!mounted || !loan) return;
+        // Ensure the app's mode matches the loan we're editing so the visual
+        // accent + downstream save path is correct.
+        if (loan.mode && loan.mode !== activeMode) setMode(loan.mode);
+        setDirection(loan.direction || 'lent');
+        setCounterpartyName(loan.counterparty_name || '');
+        setCounterpartyEmail(loan.counterparty_email || '');
+        setCounterpartyPhone(loan.counterparty_phone || '');
+        setAmount(String(loan.principal_amount ?? ''));
+        setInterestRate(String(loan.interest_rate ?? '0'));
+        setStartDate(loan.start_date || todayISO());
+        setDueDate(loan.due_date || '');
+        setReminderEnabled(!!loan.reminder_enabled);
+        setReminderDay(String(loan.reminder_day || 1));
+        setNotes(loan.notes || '');
+      } catch (e: any) {
+        Alert.alert('Failed to load', e?.response?.data?.detail || e?.message || 'Try again');
+      } finally {
+        if (mounted) setLoadingExisting(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editLoanId]);
+
+  const closeScreen = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
     } else {
       router.replace('/(tabs)');
     }
-  };
+  }, [router]);
 
   const monthlyInterest = (() => {
     const p = parseFloat(amount) || 0;
@@ -55,64 +114,96 @@ export default function AddLoan() {
     return +((p * r) / 1200).toFixed(2);
   })();
 
-  const save = async () => {
-    // Hard guard against double-tap / double-execution
-    if (savingRef.current) return;
+  const validate = (): { ok: true; amt: number; rate: number } | { ok: false } => {
     if (!counterpartyName.trim()) {
       Alert.alert('Missing info', 'Please enter the counterparty name.');
-      return;
+      return { ok: false };
     }
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) {
       Alert.alert('Invalid amount', 'Please enter a valid principal amount.');
-      return;
+      return { ok: false };
     }
     const rate = parseFloat(interestRate);
     if (isNaN(rate) || rate < 0 || rate > 100) {
       Alert.alert('Invalid rate', 'Interest rate must be 0-100% per year.');
-      return;
+      return { ok: false };
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+      Alert.alert('Invalid start date', 'Please pick a valid start date.');
+      return { ok: false };
+    }
+    if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+      Alert.alert('Invalid due date', 'Please pick a valid due date.');
+      return { ok: false };
+    }
+    if (dueDate && dueDate < startDate) {
+      Alert.alert('Invalid due date', 'Due date cannot be before the start date.');
+      return { ok: false };
+    }
+    return { ok: true, amt, rate };
+  };
+
+  const save = async () => {
+    if (savingRef.current) return;
+    const v = validate();
+    if (!v.ok) return;
     savingRef.current = true;
     setSaving(true);
     try {
-      if (mode === 'public') {
-        await api.post('/loans', {
-          mode: 'public',
-          counterparty_name: counterpartyName.trim(),
-          counterparty_email: counterpartyEmail.trim() || undefined,
-          counterparty_phone: counterpartyPhone.trim() || undefined,
-          direction,
-          principal_amount: amt,
-          interest_rate: rate,
-          start_date: startDate,
-          due_date: dueDate || undefined,
-          reminder_enabled: reminderEnabled,
-          reminder_day: Math.max(1, Math.min(28, parseInt(reminderDay) || 1)),
-          notes: notes.trim() || undefined,
-        });
+      const payload = {
+        counterparty_name: counterpartyName.trim(),
+        counterparty_email: counterpartyEmail.trim() || undefined,
+        counterparty_phone: counterpartyPhone.trim() || undefined,
+        direction,
+        principal_amount: v.amt,
+        interest_rate: v.rate,
+        start_date: startDate,
+        due_date: dueDate || undefined,
+        reminder_enabled: reminderEnabled,
+        reminder_day: Math.max(1, Math.min(28, parseInt(reminderDay) || 1)),
+        notes: notes.trim() || undefined,
+      };
+
+      if (isEdit) {
+        if (effectiveMode === 'public') {
+          await api.patch(`/loans/${editLoanId}`, payload);
+        } else if (user) {
+          await updatePrivateLoan(user.user_id, editLoanId!, {
+            ...payload,
+            counterparty_email: payload.counterparty_email ?? null,
+            counterparty_phone: payload.counterparty_phone ?? null,
+            due_date: dueDate || null,
+            notes: notes.trim() || null,
+          });
+        }
       } else {
-        if (!user) throw new Error('Not authenticated');
-        const loan = computeMetrics({
-          loan_id: `priv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          mode: 'private',
-          counterparty_name: counterpartyName.trim(),
-          counterparty_email: counterpartyEmail.trim() || null,
-          counterparty_phone: counterpartyPhone.trim() || null,
-          direction,
-          principal_amount: amt,
-          interest_rate: rate,
-          start_date: startDate,
-          due_date: dueDate || null,
-          reminder_enabled: reminderEnabled,
-          reminder_day: Math.max(1, Math.min(28, parseInt(reminderDay) || 1)),
-          notes: notes.trim() || null,
-          status: 'active',
-          monthly_interest: 0,
-          accrued_interest: 0,
-          total_due: 0,
-          months_elapsed: 0,
-        });
-        await addPrivateLoan(user.user_id, loan);
+        if (effectiveMode === 'public') {
+          await api.post('/loans', { mode: 'public', ...payload });
+        } else {
+          if (!user) throw new Error('Not authenticated');
+          const loan = computeMetrics({
+            loan_id: `priv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            mode: 'private',
+            counterparty_name: payload.counterparty_name,
+            counterparty_email: payload.counterparty_email ?? null,
+            counterparty_phone: payload.counterparty_phone ?? null,
+            direction: payload.direction,
+            principal_amount: payload.principal_amount,
+            interest_rate: payload.interest_rate,
+            start_date: payload.start_date,
+            due_date: dueDate || null,
+            reminder_enabled: payload.reminder_enabled,
+            reminder_day: payload.reminder_day,
+            notes: notes.trim() || null,
+            status: 'active',
+            monthly_interest: 0,
+            accrued_interest: 0,
+            total_due: 0,
+            months_elapsed: 0,
+          });
+          await addPrivateLoan(user.user_id, loan);
+        }
       }
       closeScreen();
     } catch (e: any) {
@@ -123,6 +214,24 @@ export default function AddLoan() {
     }
   };
 
+  if (loadingExisting) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        <View style={styles.header}>
+          <TouchableOpacity testID="add-loan-close-button" onPress={closeScreen} style={styles.closeBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <X size={22} color={colors.text.primary} />
+          </TouchableOpacity>
+          <View style={[styles.modeBadge, { backgroundColor: accent }]}>
+            <Text style={styles.modeBadgeText}>{effectiveMode.toUpperCase()}</Text>
+          </View>
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator color={accent} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.header}>
@@ -130,13 +239,13 @@ export default function AddLoan() {
           <X size={22} color={colors.text.primary} />
         </TouchableOpacity>
         <View style={[styles.modeBadge, { backgroundColor: accent }]}>
-          <Text style={styles.modeBadgeText}>{mode.toUpperCase()}</Text>
+          <Text style={styles.modeBadgeText}>{effectiveMode.toUpperCase()}</Text>
         </View>
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <Text style={styles.title}>New {mode} loan</Text>
+          <Text style={styles.title}>{isEdit ? 'Edit loan' : `New ${effectiveMode} loan`}</Text>
 
           {/* Direction toggle */}
           <View style={styles.dirToggle}>
@@ -222,18 +331,29 @@ export default function AddLoan() {
 
           {/* Start date */}
           <Text style={styles.label}>Start date</Text>
-          <View style={styles.input}><Text style={{ color: colors.text.primary }}>{startDate}</Text></View>
+          <DatePickerField
+            testID="add-loan-start-date"
+            value={startDate}
+            onChange={setStartDate}
+            placeholder="Pick start date"
+            accent={accent}
+            maximumDate={new Date()}
+          />
 
           {/* Due date */}
-          <Text style={styles.label}>Due date (optional, YYYY-MM-DD)</Text>
-          <TextInput
+          <Text style={styles.label}>Due date (optional)</Text>
+          <DatePickerField
             testID="add-loan-due-date"
-            style={styles.input}
-            placeholder="e.g. 2026-12-31"
-            placeholderTextColor={colors.text.tertiary}
             value={dueDate}
-            onChangeText={setDueDate}
-            autoCapitalize="none"
+            onChange={setDueDate}
+            placeholder="Pick due date"
+            accent={accent}
+            minimumDate={(() => {
+              const d = new Date(startDate);
+              return isNaN(d.getTime()) ? undefined : d;
+            })()}
+            clearable
+            onClear={() => setDueDate('')}
           />
 
           {/* Reminders */}
@@ -276,14 +396,15 @@ export default function AddLoan() {
 
           <TouchableOpacity
             testID="add-loan-save-button"
-            style={[styles.saveBtn, { backgroundColor: accent }]}
+            style={[styles.saveBtn, { backgroundColor: accent }, saving && { opacity: 0.7 }]}
             onPress={save}
             disabled={saving}
+            activeOpacity={0.8}
           >
             {saving ? <ActivityIndicator color="#fff" /> : (
               <>
-                <Text style={styles.saveBtnText}>Save loan</Text>
-                <ArrowRight size={18} color="#fff" />
+                <Text style={styles.saveBtnText}>{isEdit ? 'Save changes' : 'Save loan'}</Text>
+                {isEdit ? <Check size={18} color="#fff" /> : <ArrowRight size={18} color="#fff" />}
               </>
             )}
           </TouchableOpacity>

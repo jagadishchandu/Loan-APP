@@ -108,6 +108,121 @@ user_problem_statement: |
   - Add Loan: pressing Save allows saving twice (double submit)
   - Add Loan: pressing Close (X) doesn't close the screen
   Then do a full sweep across the app and find/fix any remaining UI bugs.
+  
+  Extended PATCH /api/loans/{loan_id} endpoint to accept additional fields:
+  - counterparty_name, counterparty_email, counterparty_phone
+  - direction ("lent" | "borrowed")
+  - start_date (YYYY-MM-DD)
+  Verify all loan CRUD endpoints work correctly.
+
+backend:
+  - task: "POST /api/auth/login - User authentication"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: Login endpoint works correctly with test credentials (tester@lendsplit.dev / Test@1234). Returns access_token and user object."
+
+  - task: "POST /api/loans - Create public loan"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: Loan creation works with all fields including new ones (counterparty_name, counterparty_email, counterparty_phone, direction, start_date). Returns loan_id and all loan details."
+
+  - task: "GET /api/loans - List all loans"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: List loans endpoint works correctly. Returns array of loans with all fields including counterparty details and status."
+
+  - task: "GET /api/loans/{loan_id} - Get loan detail"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: Get loan detail endpoint works correctly. Returns complete loan object with all fields including counterparty_name, counterparty_email, counterparty_phone, direction, start_date."
+
+  - task: "PATCH /api/loans/{loan_id} - Update loan with NEW fields"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: PATCH endpoint correctly accepts and persists all NEW fields: counterparty_name, counterparty_email, counterparty_phone, direction, start_date. All fields updated correctly and verified in response."
+
+  - task: "PATCH /api/loans/{loan_id} - Update loan with EXISTING fields"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: PATCH endpoint correctly accepts and persists EXISTING fields: principal_amount, interest_rate, due_date, notes. All fields updated correctly."
+
+  - task: "PATCH /api/loans/{loan_id} - Mark loan as settled"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: PATCH endpoint correctly updates loan status to 'settled'. Status persists correctly."
+
+  - task: "PATCH /api/loans/{loan_id} - Reopen settled loan (settled -> active)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: PATCH endpoint correctly reopens settled loan by updating status from 'settled' to 'active'. Reopen flow works as expected."
+
+  - task: "DELETE /api/loans/{loan_id} - Delete loan"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "VERIFIED: DELETE endpoint works correctly. Loan deleted successfully and verified with 404 response on subsequent GET request."
 
 frontend:
   - task: "Profile: Logout button (cross-platform confirm)"
@@ -189,3 +304,7 @@ agent_communication:
       message: "Full UI sweep complete. All 3 originally reported bugs VERIFIED FIXED. No additional UI bugs found across auth flows, tabs navigation, mode toggle, add-loan modal (all paths), loans list & filters, loan detail, payments, reminders, profile, subscription, inbox, and backup screens. Form validation works. Modals close correctly. App is ready for user acceptance."
     - agent: "testing"
       message: "TESTING COMPLETE ✅ All 3 originally reported bugs are FIXED and working correctly: (1) Logout button works with cross-platform confirm, (2) Double-save prevention works with savingRef guard, (3) Add Loan close button works with canGoBack() fallback. Comprehensive UI sweep completed across all screens - no critical bugs found. All navigation, modals, forms, and tabs work as expected. App is ready for user acceptance."
+    - agent: "main"
+      message: "Extended LoanUpdate model in backend/server.py to accept additional fields for PATCH /api/loans/{loan_id}: counterparty_name, counterparty_email, counterparty_phone, direction, start_date. Please verify PATCH endpoint accepts and persists these fields, and re-verify all loan CRUD endpoints (POST, GET list, GET detail, PATCH with new/existing fields, PATCH settle/reopen, DELETE)."
+    - agent: "testing"
+      message: "BACKEND TESTING COMPLETE ✅ All 9 loan CRUD endpoints tested and working correctly: (1) POST /api/auth/login works, (2) POST /api/loans creates loan with all fields, (3) GET /api/loans lists loans, (4) GET /api/loans/{id} returns detail, (5) PATCH with NEW fields (counterparty_name, counterparty_email, counterparty_phone, direction, start_date) - all persist correctly, (6) PATCH with EXISTING fields (principal_amount, interest_rate, due_date, notes) - all persist correctly, (7) PATCH to mark status=settled works, (8) PATCH to reopen (settled->active) works, (9) DELETE works and verified with 404. No errors found. All backend APIs working as expected."

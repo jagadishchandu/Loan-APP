@@ -130,8 +130,13 @@ class LoanIn(BaseModel):
     request_acceptance: bool = False  # if true and counterparty is linked, status starts as pending_acceptance
 
 class LoanUpdate(BaseModel):
+    counterparty_name: Optional[str] = None
+    counterparty_email: Optional[str] = None
+    counterparty_phone: Optional[str] = None
+    direction: Optional[Literal["lent", "borrowed"]] = None
     principal_amount: Optional[float] = None
     interest_rate: Optional[float] = None
+    start_date: Optional[str] = None
     due_date: Optional[str] = None
     reminder_enabled: Optional[bool] = None
     reminder_day: Optional[int] = None
